@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>果実QR撮影カメラ</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#101820;color:#fff;font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center}header{padding:12px;font-weight:700;font-size:19px}.camera{position:relative;width:min(100vw,480px);aspect-ratio:3/4;margin:auto;background:#000;overflow:hidden}video{display:block;width:100%;height:100%;object-fit:cover}.overlay{position:absolute;inset:0;pointer-events:none}.qr-guide{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:1.5cm;height:1.5cm;border:2px solid #55d9ef;border-radius:3px;box-shadow:0 0 0 2px #0005}.qr-guide.ok{border-color:#59f294}.status{padding:12px;min-height:44px;color:#ffd477}.id{min-height:22px;color:#a4f0ba;font-size:13px;overflow-wrap:anywhere;padding:0 12px}button{padding:13px 18px;margin:7px;border:0;border-radius:12px;font-size:16px;background:#218b55;color:white;font-weight:700}button:disabled{background:#555;color:#bbb}#shutter{height:72px;width:72px;border-radius:50%;background:#fff;border:6px solid #aaa}#shutter:disabled{background:#555}#preview{display:none}#photo{display:block;width:min(100vw,480px);height:auto;margin:auto}#save,#retry,#next{display:none}.note{font-size:12px;color:#b8c2c9;padding:10px 16px;line-height:1.5}
+</style>
+</head>
+<body>
+<header>果実QR撮影カメラ</header>
+<div id="camera" class="camera"><video id="video" autoplay muted playsinline></video><div class="overlay"><div id="qrGuide" class="qr-guide"></div></div></div>
+<div id="status" class="status" role="status">カメラを起動してください</div><div id="id" class="id"></div>
+<button id="start">カメラ起動</button><button id="shutter" disabled aria-label="写真を撮影">●</button>
+<div id="preview"><img id="photo" alt="撮影した果実"></div>
+<button id="save">写真を保存</button><button id="retry">撮り直す</button><button id="next">次の果実</button>
+<div class="note">QRコードの中心を水色の枠に合わせてください。写真は480×640pxで保存します。</div>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const video=$('video'),camera=$('camera'),statusEl=$('status'),idEl=$('id'),shutter=$('shutter'),guide=$('qrGuide');
+const scanCanvas=document.createElement('canvas'),scanCtx=scanCanvas.getContext('2d',{willReadFrequently:true});
+let stream=null,session=0,loopTimer=null,busy=false,recognizedId=null,photoId=null,blob=null,blobUrl=null;
+function status(message){statusEl.textContent=message}
+function stopCamera(){if(loopTimer!==null){clearTimeout(loopTimer);loopTimer=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null}
+function resetRecognition(){recognizedId=null;shutter.disabled=true;guide.classList.remove('ok');idEl.textContent=''}
+function showCapture(){camera.style.display='block';shutter.style.display='inline-block';$('preview').style.display='none';$('start').style.display='none';['save','retry','next'].forEach(id=>$(id).style.display='none')}
+async function startCamera(){const token=++session;stopCamera();resetRecognition();busy=false;photoId=null;blob=null;showCapture();status('QRコードの中心を水色の枠に合わせてください');try{if(!navigator.mediaDevices?.getUserMedia)throw Error('HTTPS接続で開いてください');const s=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1440}}});if(token!==session){s.getTracks().forEach(t=>t.stop());return}stream=s;video.srcObject=s;await video.play();if(token!==session)return;if(typeof jsQR!=='function')throw Error('QR読み取りライブラリが利用できません');scheduleScan(token,0)}catch(e){if(token!==session)return;stopCamera();status('カメラを起動できません: '+e.message);$('start').style.display='inline-block'}}
+function detectQR(){if(!video.videoWidth||!video.videoHeight)return null;const scale=Math.min(1,1280/video.videoWidth),w=Math.max(1,Math.round(video.videoWidth*scale)),h=Math.max(1,Math.round(video.videoHeight*scale));scanCanvas.width=w;scanCanvas.height=h;scanCtx.drawImage(video,0,0,w,h);const data=scanCtx.getImageData(0,0,w,h);const result=jsQR(data.data,w,h,{inversionAttempts:'attemptBoth'});if(!result)return null;const corners=[result.location.topLeftCorner,result.location.topRightCorner,result.location.bottomRightCorner,result.location.bottomLeftCorner];const cx=corners.reduce((s,p)=>s+p.x,0)/4,cy=corners.reduce((s,p)=>s+p.y,0)/4;const box=camera.getBoundingClientRect(),target=guide.getBoundingClientRect();const factor=Math.max(box.width/w,box.height/h),dx=(box.width-w*factor)/2,dy=(box.height-h*factor)/2;const x=box.left+dx+cx*factor,y=box.top+dy+cy*factor;return x>=target.left&&x<=target.right&&y>=target.top&&y<=target.bottom?result.data:null}
+function scheduleScan(token,delay=180){if(token!==session||!stream)return;loopTimer=setTimeout(()=>scanLoop(token),delay)}
+function scanLoop(token){if(token!==session||!stream||busy)return;busy=true;try{const id=detectQR();if(token!==session)return;if(id!==null){recognizedId=id;shutter.disabled=false;guide.classList.add('ok');status('QR認識成功・撮影できます');idEl.textContent='ID: '+id}else{resetRecognition();status('QRコードの中心を水色の枠に合わせてください')}}catch(e){resetRecognition();status('QRコードを認識できません')}finally{busy=false}scheduleScan(token)}
+function capture(){if(shutter.disabled||!stream||busy||recognizedId===null)return;let id;try{id=detectQR()}catch(e){id=null}if(id===null||id!==recognizedId){resetRecognition();status('QRコードを再認識してください');return}photoId=id;const c=document.createElement('canvas');c.width=480;c.height=640;const ctx=c.getContext('2d');const vw=video.videoWidth,vh=video.videoHeight;const scale=Math.max(480/vw,640/vh),sw=480/scale,sh=640/scale;ctx.drawImage(video,(vw-sw)/2,(vh-sh)/2,sw,sh,0,0,480,640);const token=++session;stopCamera();shutter.disabled=true;camera.style.display='none';shutter.style.display='none';$('preview').style.display='block';status('撮影画像：480 × 640 px');c.toBlob(b=>{if(token!==session)return;if(!b){status('画像の生成に失敗しました');$('retry').style.display='inline-block';return}blob=b;if(blobUrl)URL.revokeObjectURL(blobUrl);blobUrl=URL.createObjectURL(b);$('photo').src=blobUrl;['save','retry','next'].forEach(key=>$(key).style.display='inline-block')},'image/jpeg',0.92)}
+function fileName(){const d=new Date(),pad=n=>String(n).padStart(2,'0');const stamp=d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate())+'_'+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds());const safe=(photoId||'QR').replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,60)||'QR';return safe+'_'+stamp+'.jpg'}
+async function savePhoto(){if(!blob)return;const name=fileName(),file=new File([blob],name,{type:'image/jpeg'});try{if(navigator.canShare?.({files:[file]})){await navigator.share({files:[file]});return}}catch(e){if(e.name==='AbortError')return}const a=document.createElement('a');a.href=blobUrl;a.download=name;document.body.appendChild(a);a.click();a.remove();status('保存先を確認してください。必要なら画像を長押しして保存してください')}
+$('start').onclick=startCamera;shutter.onclick=capture;$('save').onclick=savePhoto;$('retry').onclick=startCamera;$('next').onclick=startCamera;
+window.addEventListener('pagehide',()=>{++session;stopCamera();if(blobUrl)URL.revokeObjectURL(blobUrl)});
+</script>
+</body>
+</html>
