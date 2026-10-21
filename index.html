@@ -1,0 +1,187 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>果実QRカメラ v15</title><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><style>
+*{box-sizing:border-box}body{margin:0;background:#111b21;color:#fff;font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center}header{padding:12px;font-weight:700;font-size:19px}.camera{position:relative;width:min(100vw,480px);aspect-ratio:3/4;margin:auto;background:#000;overflow:hidden}video{width:100%;height:100%;object-fit:cover}#guide{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:1.67cm;height:1.67cm;border:2px dashed #5de2ef;border-radius:3px;pointer-events:none}#guide.ok{border-color:#ff3434}#preview{display:none}#photo{width:min(100vw,480px);display:block;margin:auto}#status{padding:10px;min-height:38px;color:#f4d17c}button{border:0;border-radius:12px;background:#21895b;color:#fff;padding:13px 17px;margin:6px;font-size:16px;font-weight:600}button:disabled{background:#4d565a;color:#adb4b8}#shutter{height:72px;width:72px;border-radius:50%;background:#fff;border:6px solid #9da5a9}#shutter:disabled{background:#5a6165}#actions{display:none}small{color:#acbac0;display:block;margin:10px}
+
+/* iPhone: keep the shutter visible without vertical scrolling */
+html,body{min-height:100%;overscroll-behavior-y:none}
+body{min-height:100dvh;display:flex;flex-direction:column;padding-bottom:env(safe-area-inset-bottom)}
+header{flex:none;padding:5px 8px;font-size:16px;line-height:22px}
+.camera{flex:none;width:min(100vw,480px,calc((100dvh - 205px - env(safe-area-inset-bottom))*0.75));max-width:100%;aspect-ratio:3/4}
+#status{flex:none;padding:5px 8px;min-height:28px;font-size:13px;line-height:18px}
+
+
+#shutter{flex:none;width:62px;height:62px;margin:4px auto;border-width:5px}
+#start{align-self:center;margin:5px}
+#actions{flex:none}
+#actions button{padding:9px 12px;margin:3px;font-size:14px}
+#saveHelp{font-size:11px!important;padding:2px 8px!important}
+small{font-size:10px;margin:2px 5px;line-height:13px}
+#preview{flex:none;min-height:0;overflow:auto}
+#photo{max-height:calc(100dvh - 250px - env(safe-area-inset-bottom));width:auto;max-width:100%;object-fit:contain}
+@media(max-height:680px){.camera{width:min(100vw,480px,calc((100dvh - 178px - env(safe-area-inset-bottom))*0.75))}header{padding:2px;font-size:14px}#shutter{height:54px;width:54px;margin:2px auto}small{display:none}}
+
+/* v14: camera and preview share one fixed image slot, with a fixed-height control row. */
+#camera,#preview{flex:none;width:min(100vw,480px,calc((100dvh - 205px - env(safe-area-inset-bottom))*0.75));max-width:100%;aspect-ratio:3/4;margin:0 auto;overflow:hidden;background:#000}
+#preview{display:none;min-height:unset;overflow:hidden}
+#photo{display:block;width:100%;height:100%;max-width:none;max-height:none;object-fit:cover;margin:0}
+#controls{height:72px;flex:none;display:flex;align-items:center;justify-content:center;width:100%;padding:0 10px}
+#shutter{display:block;margin:0 auto;width:62px;height:62px;flex:none}
+#actions{display:none;width:min(100%,480px);gap:10px;align-items:center;justify-content:center;margin:0 auto}
+#actions button{margin:0;padding:13px 8px;min-height:48px;border-radius:12px;font-size:14px;white-space:nowrap}
+#save{flex:1.6;background:#21895b}
+#next{flex:1;background:#47545d}
+#saveHelp{height:24px;flex:none;font-size:11px;color:#d7e4e9;padding:3px 6px;visibility:hidden}
+#status{height:42px;min-height:42px;display:flex;align-items:center;justify-content:center;padding:3px 8px}
+@media(max-height:680px){#camera,#preview{width:min(100vw,480px,calc((100dvh - 178px - env(safe-area-inset-bottom))*0.75))}#controls{height:60px}#shutter{width:54px;height:54px}}
+</style></head><body><header>果実QR撮影カメラ <span style="font-size:11px;color:#a7b9c3">v15</span></header><div id="camera" class="camera"><video id="video" autoplay muted playsinline></video><div id="guide"></div></div><div id="preview" class="camera"><img id="photo" alt="撮影した果実"></div><div id="qrData" aria-live="polite" style="font-size:15px;font-weight:700;min-height:22px;color:#fff;padding:2px 8px">QRデータ：未認識</div><div id="status" aria-live="polite">カメラを起動してください</div><button id="start">カメラ起動</button><div id="controls"><button id="shutter" disabled aria-label="撮影"></button><div id="actions"><button id="save" disabled>写真アプリに保存</button><button id="next">次の果実</button></div></div><div id="saveHelp">保存は共有メニューの「画像を保存」を選択してください。</div><small>QR認識後は10秒間撮影できます。次の果実ではQRを再認識します。</small><small>保存画像：480 × 640 px / JPEG　※QR認識ライブラリの読み込みには通信が必要</small>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id), video=$('video'), statusEl=$('status'), details={set textContent(value){}}, guide=$('guide');
+let stream=null,token=0,running=false,busy=false,qrId='',last=null,photoBlob=null,photoUrl=null,detector=null,zxing=null,scanTimer=null,watchdog=null,scanCount=0,scanStarted=0,authorizedUntil=0,authorizedId="",authTimer=null;
+const cv=document.createElement('canvas'),cx=cv.getContext('2d',{willReadFrequently:true});
+function setStatus(s){statusEl.textContent=s}
+function setQrData(value){$('qrData').textContent=value?'QRデータ：'+value:'QRデータ：未認識'}
+function stop(){clearInterval(authTimer);authTimer=null;running=false;busy=false;clearTimeout(scanTimer);clearInterval(watchdog);watchdog=null;if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null}
+function reset(){setQrData('');authorizedUntil=0;authorizedId='';last=null;qrId='';$('shutter').disabled=true;guide.classList.remove('ok');details.textContent=''}
+async function startCamera(){const t=++token;stop();reset();busy=false;scanCount=0;scanStarted=0;detector=null;zxing=null;photoBlob=null;$('camera').style.display='block';$('preview').style.display='none';$('actions').style.display='none';$('shutter').style.display='block';$('saveHelp').style.visibility='hidden';$('start').style.display='none';setStatus('カメラ起動中… 次の果実のQR認識を待っています');try{const s=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1440}}});if(t!==token){s.getTracks().forEach(x=>x.stop());return}stream=s;video.srcObject=s;await video.play();if(t!==token)return;detector=null;try{if('BarcodeDetector' in window){const formats=await BarcodeDetector.getSupportedFormats();if(formats.includes('qr_code'))detector=new BarcodeDetector({formats:['qr_code']})}}catch(e){}try{zxing=window.ZXing?new ZXing.BrowserQRCodeReader():null}catch(e){zxing=null}if(!detector&&!window.jsQR&&!zxing)throw Error('QRライブラリの読み込みに失敗しました');running=true;setStatus('QR認識待ち：次の果実のQRを中央に合わせてください');scan(t);watchdog=setInterval(()=>{if(!running||t!==token)return;if(scanStarted&&Date.now()-scanStarted>4500){scanStarted=0;busy=false;zxing=null;clearTimeout(scanTimer);scanTimer=setTimeout(()=>scan(t),50);details.textContent='読み取り処理が停止したため再開しました（ZXingを停止）'}},1500)}catch(e){if(t!==token)return;stop();setStatus('カメラを起動できません: '+e.message);$('start').style.display='inline-block'}}
+function cropCanvas(){if(!video.videoWidth)return null;const w=video.videoWidth,h=video.videoHeight,scale=Math.min(1,1600/w);cv.width=Math.round(w*scale);cv.height=Math.round(h*scale);cx.drawImage(video,0,0,cv.width,cv.height);return {canvas:cv,w:cv.width,h:cv.height}}
+function regions(base){
+ const {w,h}=base, out=[{canvas:cv,x:0,y:0,sx:1,sy:1,label:'全体'}];
+ for(const [fraction,size,label] of [[0.56,960,'中央拡大'],[0.30,1000,'中央精密']]){
+  const side=Math.min(w,h)*fraction,x=(w-side)/2,y=(h-side)/2;
+  const c=document.createElement('canvas');c.width=c.height=size;
+  c.getContext('2d',{willReadFrequently:true}).drawImage(cv,x,y,side,side,0,0,size,size);
+  out.push({canvas:c,x,y,sx:side/size,sy:side/size,label});
+ }
+ return out;
+}
+function enhancedCanvas(source,mode){
+ const c=document.createElement('canvas');c.width=source.width;c.height=source.height;
+ const context=c.getContext('2d',{willReadFrequently:true});context.drawImage(source,0,0);
+ const im=context.getImageData(0,0,c.width,c.height),d=im.data;
+ for(let i=0;i<d.length;i+=4){
+  const y=0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+  let v=mode==='contrast'?Math.max(0,Math.min(255,(y-128)*1.85+128)):
+        mode==='bright'?Math.max(0,Math.min(255,(y-105)*1.35+145)):
+        mode==='invert'?255-y:y;
+  d[i]=d[i+1]=d[i+2]=v;
+ }
+ context.putImageData(im,0,0);return c;
+}
+function rotatedCanvas(source){
+ const c=document.createElement('canvas');c.width=source.height;c.height=source.width;
+ const ctx=c.getContext('2d');ctx.translate(c.width,0);ctx.rotate(Math.PI/2);ctx.drawImage(source,0,0);return c;
+}
+function jsqrHit(canvas,engine){
+ if(typeof window.jsQR!=='function')return null;
+ const ctx=canvas.getContext('2d',{willReadFrequently:true});
+ const im=ctx.getImageData(0,0,canvas.width,canvas.height);
+ const v=window.jsQR(im.data,canvas.width,canvas.height,{inversionAttempts:'attemptBoth'});
+ return v?{value:v.data,points:[v.location.topLeftCorner,v.location.topRightCorner,v.location.bottomRightCorner,v.location.bottomLeftCorner],engine}:null;
+}
+function inside(points,w,h){const box=$('camera').getBoundingClientRect(),g=guide.getBoundingClientRect(),factor=Math.max(box.width/w,box.height/h),dx=(box.width-w*factor)/2,dy=(box.height-h*factor)/2;const x=points.reduce((s,p)=>s+p.x,0)/points.length*factor+dx+box.left,y=points.reduce((s,p)=>s+p.y,0)/points.length*factor+dy+box.top;return x>=g.left&&x<=g.right&&y>=g.top&&y<=g.bottom}
+function normalizePoints(p,r){return p.map(q=>({x:r.x+q.x*r.sx,y:r.y+q.y*r.sy}))}
+async function detect(){
+ const base=cropCanvas();if(!base)return {kind:'none'};
+ let outside=null;
+ const rs=regions(base);
+ // Fast path: native detector and ordinary jsQR on each crop.
+ for(const r of rs){
+  let hits=[];
+  if(detector){try{const found=await detector.detect(r.canvas);for(const v of found){
+   if(v.cornerPoints?.length>=4)hits.push({value:v.rawValue,points:v.cornerPoints,engine:'BarcodeDetector'});
+  }}catch(e){}}
+  try{const hit=jsqrHit(r.canvas,'jsQR');if(hit)hits.push(hit)}catch(e){}
+  for(const hit of hits){
+   const points=normalizePoints(hit.points,r);
+   const item={kind:'found',value:hit.value,engine:hit.engine,region:r.label};
+   if(inside(points,base.w,base.h))return item;
+   outside={...item,kind:'outside'};
+  }
+ }
+ // Slow path: run just one additional preprocessing variant per scan to keep UI responsive.
+ if(typeof window.jsQR==='function'){
+  const modes=['contrast','bright','invert','rotate'];
+  const mode=modes[scanCount%modes.length];
+  for(const r of [rs[1],rs[2]]){
+   try{
+    const rotated=mode==='rotate',c=rotated?rotatedCanvas(r.canvas):enhancedCanvas(r.canvas,mode);
+    const hit=jsqrHit(c,'jsQR+'+mode);
+    if(!hit)continue;
+    if(rotated)hit.points=hit.points.map(p=>({x:p.y,y:r.canvas.height-p.x}));
+    const points=normalizePoints(hit.points,r);
+    const item={kind:'found',value:hit.value,engine:hit.engine,region:r.label};
+    if(inside(points,base.w,base.h))return item;
+    outside={...item,kind:'outside'};
+   }catch(e){}
+  }
+ }
+ // ZXing is a separate fallback, limited in frequency to avoid blocking scans.
+ if(zxing && scanCount%5===0){
+  const r=rs[1];
+  try{
+   const v=await Promise.race([zxing.decodeFromImageUrl(r.canvas.toDataURL('image/png')),
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error('ZXing timeout')),900))]);
+   if(v){const pts=v.getResultPoints?.()||[];
+    if(pts.length>=2){const xs=pts.map(p=>p.getX()),ys=pts.map(p=>p.getY());
+     const minx=Math.min(...xs),maxx=Math.max(...xs),miny=Math.min(...ys),maxy=Math.max(...ys);
+     const points=normalizePoints([{x:minx,y:miny},{x:maxx,y:miny},{x:maxx,y:maxy},{x:minx,y:maxy}],r);
+     const item={kind:'found',value:v.getText(),engine:'ZXing',region:r.label};
+     if(inside(points,base.w,base.h))return item;
+     outside={...item,kind:'outside'};
+    }
+   }
+  }catch(e){if(e.message==='ZXing timeout')zxing=null}
+ }
+ return outside||{kind:'none'};
+}
+function updateAuthorization(){
+ const remaining=Math.max(0,authorizedUntil-Date.now());
+ if(remaining>0&&authorizedId){
+  $('shutter').disabled=false;guide.classList.add('ok');setQrData(authorizedId);
+  setStatus('撮影できます：残り'+Math.ceil(remaining/1000)+'秒');
+  return true;
+ }
+ if(authorizedUntil){authorizedUntil=0;authorizedId='';last=null;setQrData('');$('shutter').disabled=true;guide.classList.remove('ok');setStatus('10秒経過しました。QRをもう一度認識してください');}
+ return false;
+}
+async function scan(t){
+ if(!running||t!==token)return;
+ if(updateAuthorization()){scanTimer=setTimeout(()=>scan(t),200);return;}
+ if(busy){scanTimer=setTimeout(()=>scan(t),100);return;}
+ busy=true;scanStarted=Date.now();scanCount++;
+ try{
+  const v=await detect();if(t!==token)return;
+  if(v.kind==='found'){
+   authorizedId=v.value;authorizedUntil=Date.now()+10000;
+   last={...v,time:Date.now()};qrId=v.value;
+   details.textContent='方式: '+v.engine+' / '+v.region+' / ID: '+v.value;
+   updateAuthorization();
+  }else{
+   last=null;$('shutter').disabled=true;guide.classList.remove('ok');
+   setStatus(v.kind==='outside'?'QRは検出しました。中央の枠に合わせてください':'QR認識待ち：QRを映してください（距離・ピント・照明を確認）');
+   details.textContent=v.kind==='outside'?'検出方式: '+v.engine+' / '+v.region:'利用可能: '+[detector&&'BarcodeDetector',window.jsQR&&'jsQR',zxing&&'ZXing'].filter(Boolean).join(' / ');
+  }
+ }catch(e){if(!authorizedUntil){last=null;$('shutter').disabled=true;setStatus('検出エラー: '+e.message)}}
+ finally{if(t===token){busy=false;scanStarted=0}}
+ if(running&&t===token)scanTimer=setTimeout(()=>scan(t),220);
+}
+function capture(){
+ if(!stream||!authorizedId||Date.now()>=authorizedUntil||$('shutter').disabled)return;
+ const expected=authorizedId;
+ const c=document.createElement('canvas');c.width=480;c.height=640;
+ const w=video.videoWidth,h=video.videoHeight;
+ if(!w||!h){setStatus('カメラ映像を取得できません');return}
+ const ratio=Math.max(480/w,640/h),sw=480/ratio,sh=640/ratio;
+ c.getContext('2d').drawImage(video,(w-sw)/2,(h-sh)/2,sw,sh,0,0,480,640);
+ qrId=expected;setQrData(expected);++token;stop();authorizedUntil=0;authorizedId='';
+ $('camera').style.display='none';$('shutter').style.display='none';
+ $('preview').style.display='block';$('actions').style.display='flex';$('saveHelp').style.visibility='visible';
+ $('save').disabled=true;setStatus('撮影画像：480 × 640 px');
+ c.toBlob(b=>{if(!b){setStatus('画像生成に失敗しました');return}photoBlob=b;if(photoUrl)URL.revokeObjectURL(photoUrl);photoUrl=URL.createObjectURL(b);$('photo').src=photoUrl;$('save').disabled=false},'image/jpeg',.92);
+}
+function filename(){const d=new Date(),stamp=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('')+'_'+[d.getHours(),d.getMinutes(),d.getSeconds()].map(v=>String(v).padStart(2,'0')).join('');return (qrId.replace(/[^a-zA-Z0-9_-]/g,'_').slice(0,60)||'QR')+'_'+stamp+'.jpg'}
+async function save(){if(!photoBlob)return;const file=new File([photoBlob],filename(),{type:'image/jpeg'});try{if(navigator.canShare?.({files:[file]})){setStatus('共有メニューから「画像を保存」を選択してください');await navigator.share({files:[file]});return}}catch(e){if(e.name==='AbortError')return}const a=document.createElement('a');a.href=photoUrl;a.download=file.name;document.body.appendChild(a);a.click();a.remove();setStatus('写真アプリへ保存するには、画像を開いて長押しし「写真に保存」を選んでください')}
+$('start').onclick=startCamera;$('shutter').onclick=capture;$('save').onclick=save;$('next').onclick=()=>{setStatus('次の果実の撮影を準備しています…');startCamera()};window.addEventListener('pagehide',()=>{++token;stop();if(photoUrl)URL.revokeObjectURL(photoUrl)});
+</script></body></html>
